@@ -97,7 +97,45 @@ class Rank(db.Model):
     admin = db.relationship('Admin', back_populates='rank')
 
     taxis = db.relationship('Taxi', backref='rank', lazy=True)
-    destinations = db.relationship('RankDestination', back_populates='origin_rank', lazy=True)
+
+    # Fixed relationships for self-bridge
+    destinations = db.relationship(
+        'RankDestination',
+        back_populates='origin_rank',
+        foreign_keys='RankDestination.origin_rank_id',
+        lazy=True
+    )
+    incoming_routes = db.relationship(
+        'RankDestination',
+        back_populates='destination_rank',
+        foreign_keys='RankDestination.destination_rank_id',
+        lazy=True
+    )
+
+
+class RankDestination(db.Model):
+    """Represents destinations available *from* a given rank."""
+    __tablename__ = 'rank_destinations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    origin_rank_id = db.Column(db.Integer, db.ForeignKey('ranks.id'), nullable=False)
+    destination_rank_id = db.Column(db.Integer, db.ForeignKey('ranks.id'), nullable=False)
+    distance_km = db.Column(db.Float)
+    estimated_duration = db.Column(db.Integer)  # in minutes
+    fare = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Fixed relationships
+    origin_rank = db.relationship(
+        'Rank',
+        foreign_keys=[origin_rank_id],
+        back_populates='destinations'
+    )
+    destination_rank = db.relationship(
+        'Rank',
+        foreign_keys=[destination_rank_id],
+        back_populates='incoming_routes'
+    )
 
 class Taxi(db.Model):
     """Taxi vehicle."""
@@ -113,29 +151,6 @@ class Taxi(db.Model):
     driver = db.relationship('Driver', back_populates='taxi')
     trips = db.relationship('Trip', backref='taxi', lazy=True)
 
-# ===============================================================
-# Trip Destination Model (New)
-# ===============================================================
-
-class RankDestination(db.Model):
-    """Represents destinations available *from* a given rank."""
-    __tablename__ = 'rank_destinations'
-
-    id = db.Column(db.Integer, primary_key=True)
-    origin_rank_id = db.Column(db.Integer, db.ForeignKey('ranks.id'), nullable=False)
-    destination_rank_id = db.Column(db.Integer, db.ForeignKey('ranks.id'), nullable=False)
-    distance_km = db.Column(db.Float)
-    estimated_duration = db.Column(db.Integer)  # in minutes
-    fare = db.Column(db.Float)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    # Relationships
-    origin_rank = db.relationship('Rank', foreign_keys=[origin_rank_id], back_populates='destinations')
-    destination_rank = db.relationship('Rank', foreign_keys=[destination_rank_id])
-
-# ===============================================================
-# Trip Model + Association Table
-# ===============================================================
 
 # Many-to-many bridge table (Trip <-> Passengers)
 trip_passengers = db.Table('trip_passengers',
