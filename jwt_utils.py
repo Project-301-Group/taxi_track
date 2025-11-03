@@ -68,3 +68,7 @@ def get_user_role():
 # def user_profile():
 #     user = get_current_user()
 #     return {'user': user.to_dict()}
+
+
+
+

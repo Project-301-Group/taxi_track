@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 
-from models import db, User, Passenger, Driver, Admin
+from models import db, User, Passenger, Driver, Admin, Rank
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -218,5 +218,47 @@ def get_profile():
             'role': effective_role
         }
     }), 200
+
+
+@auth_bp.route('/admin/details', methods=['GET'])
+def get_admin_details():
+    """Get admin details with rank information using inner join.
+    
+    Query params: user_id (required)
+    Returns: Admin name, phone, rank name, province, city
+    """
+    user_id = request.args.get('user_id', type=int)
+    
+    if not user_id:
+        return jsonify({'error': 'user_id is required'}), 400
+    
+    # Inner join: User -> Admin -> Rank
+    result = (
+        db.session.query(User, Admin, Rank)
+        .join(Admin, User.id == Admin.user_id)
+        .join(Rank, Admin.id == Rank.admin_id)
+        .filter(User.id == user_id)
+        .first()
+    )
+    
+    if not result:
+        return jsonify({'error': 'Admin with rank not found for this user_id'}), 404
+    
+    user, admin, rank = result
+    
+    return jsonify({
+        'admin': {
+            'firstname': user.firstname,
+            'lastname': user.lastname,
+            'phone': user.phone,
+            'rank_name': rank.name,
+            'province': rank.province,
+            'city': rank.city
+        }
+    }), 200
+
+
+
+
 
 

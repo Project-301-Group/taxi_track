@@ -20,6 +20,10 @@ def create_app():
     # JWT Configuration
     app.config["JWT_SECRET_KEY"] = app.config.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)  # Tokens expire in 24 hours
+    app.config["JWT_TOKEN_LOCATION"] = ["headers"]  # Explicitly set token location to headers
+    app.config["JWT_HEADER_NAME"] = "Authorization"  # Header name
+    app.config["JWT_HEADER_TYPE"] = "Bearer"  # Header type (Bearer token)
+    app.config["JWT_CSRF_ENABLED"] = False  # Disable CSRF for API usage (CSRF is for web forms)
 
     # Initialize extensions
     db.init_app(app)
@@ -29,8 +33,10 @@ def create_app():
     # Import and register blueprints
     from routes import api_bp
     from auth import auth_bp
+    from rank_destinations import rank_dest_bp
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(auth_bp, url_prefix='/auth')
+    app.register_blueprint(rank_dest_bp, url_prefix='/')
 
     @app.route('/')
     def index():

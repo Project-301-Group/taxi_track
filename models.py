@@ -123,6 +123,7 @@ class RankDestination(db.Model):
     distance_km = db.Column(db.Float)
     estimated_duration = db.Column(db.Integer)  # in minutes
     fare = db.Column(db.Float)
+    active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Fixed relationships
