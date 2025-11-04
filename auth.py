@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
+from sqlalchemy import text
 
 from models import db, User, Passenger, Driver, Admin, Rank
 
@@ -220,42 +221,53 @@ def get_profile():
     }), 200
 
 
+
 @auth_bp.route('/admin/details', methods=['GET'])
 def get_admin_details():
-    """Get admin details with rank information using inner join.
-    
+    """Get admin details with rank information using correct user linkage.
+
     Query params: user_id (required)
     Returns: Admin name, phone, rank name, province, city
     """
     user_id = request.args.get('user_id', type=int)
-    
+
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
-    
-    # Inner join: User -> Admin -> Rank
-    result = (
-        db.session.query(User, Admin, Rank)
-        .join(Admin, User.id == Admin.user_id)
-        .join(Rank, Admin.id == Rank.admin_id)
-        .filter(User.id == user_id)
-        .first()
-    )
-    
+
+    # Corrected join chain:
+    # User → Admin (via Admin.user_id)
+    # User → Rank (via Rank.user_id)
+    sql = text("""
+        SELECT 
+            u.firstname,
+            u.lastname,
+            u.phone,
+            r.name AS rank_name,
+            r.province,
+            r.city
+        FROM users u
+        INNER JOIN admins a ON a.user_id = u.id
+        INNER JOIN ranks r ON r.admin_id = u.id
+        WHERE u.id = :user_id
+        LIMIT 1;
+    """)
+
+    result = db.session.execute(sql, {'user_id': user_id}).fetchone()
+
     if not result:
         return jsonify({'error': 'Admin with rank not found for this user_id'}), 404
-    
-    user, admin, rank = result
-    
+
     return jsonify({
         'admin': {
-            'firstname': user.firstname,
-            'lastname': user.lastname,
-            'phone': user.phone,
-            'rank_name': rank.name,
-            'province': rank.province,
-            'city': rank.city
+            'firstname': result.firstname,
+            'lastname': result.lastname,
+            'phone': result.phone,
+            'rank_name': result.rank_name,
+            'province': result.province,
+            'city': result.city
         }
     }), 200
+
 
 
 

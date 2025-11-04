@@ -34,15 +34,16 @@ def get_taxis_by_rank():
     
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
+
+    # Get the rank associated directly with this user_id
+    rank = Rank.query.filter_by(admin_id=user_id).first()
     
-    admin, rank = get_admin_rank_from_user_id(user_id)
-    
-    if not admin or not rank:
-        return jsonify({"error": "Admin rank not found"}), 404
-    
-    # Get all taxis registered under this rank
+    if not rank:
+        return jsonify({"error": "Rank not found for this user"}), 404
+
+    # Fetch all taxis under this rank
     taxis = Taxi.query.filter_by(rank_id=rank.id).all()
-    
+
     data = []
     for taxi in taxis:
         taxi_data = {
@@ -52,19 +53,19 @@ def get_taxis_by_rank():
             "status": taxi.status,
             "rank_id": taxi.rank_id,
         }
-        
-        # Include driver information if taxi has a driver
+
+        # Include driver details if available
         if taxi.driver and taxi.driver.user:
             taxi_data["driver"] = {
                 "id": taxi.driver.id,
                 "firstname": taxi.driver.user.firstname,
                 "lastname": taxi.driver.user.lastname,
                 "phone": taxi.driver.user.phone,
-                "license_number": taxi.driver.license_number
+                "license_number": taxi.driver.license_number,
             }
         else:
             taxi_data["driver"] = None
-        
+
         data.append(taxi_data)
     
     return jsonify(data), 200
@@ -81,7 +82,7 @@ def create_taxi():
         registration_number (required),
         capacity (optional, default 4),
         status (optional, default 'available'),
-        rank_id (optional),
+        user_id (required — linked to admin who manages a rank),
         driver_id (optional)
     }
     """
@@ -91,46 +92,47 @@ def create_taxi():
         return jsonify({"error": "Request body is required"}), 400
     
     registration_number = data.get("registration_number")
-    
     if not registration_number:
         return jsonify({"error": "registration_number is required"}), 400
-    
-    # Check if registration number already exists
+
+    # Check for duplicate registration
     existing = Taxi.query.filter_by(registration_number=registration_number).first()
     if existing:
         return jsonify({"error": "Taxi with this registration number already exists"}), 409
-    
-    # Validate driver_id if provided (ensure driver exists and doesn't already have a taxi)
+
+    # Get user_id and resolve to rank_id
+    user_id = data.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    rank = Rank.query.filter_by(admin_id=user_id).first()
+    if not rank:
+        return jsonify({"error": "No rank found for this user"}), 404
+
+    # Validate driver_id if provided
     driver_id = data.get("driver_id")
     if driver_id:
         driver = Driver.query.get(driver_id)
         if not driver:
             return jsonify({"error": "Driver not found"}), 404
-        
-        # Check if driver already has a taxi
+
         existing_taxi = Taxi.query.filter_by(driver_id=driver_id).first()
         if existing_taxi:
             return jsonify({"error": "Driver already has a taxi assigned"}), 409
-    
-    # Validate rank_id if provided
-    rank_id = data.get("rank_id")
-    if rank_id:
-        rank = Rank.query.get(rank_id)
-        if not rank:
-            return jsonify({"error": "Rank not found"}), 404
-    
+
+    # Create taxi with inferred rank_id
     new_taxi = Taxi(
         registration_number=registration_number,
-        capacity=data.get("capacity", 4),
+        capacity=data.get("capacity", 10),
         status=data.get("status", "available"),
-        rank_id=rank_id,
+        rank_id=rank.id,
         driver_id=driver_id
     )
-    
+
     try:
         db.session.add(new_taxi)
         db.session.commit()
-        
+
         return jsonify({
             "message": "Taxi created successfully",
             "taxi": {

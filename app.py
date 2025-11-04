@@ -35,10 +35,12 @@ def create_app():
     from auth import auth_bp
     from rank_destinations import rank_dest_bp
     from taxi_routes import taxi_bp
+    from driver_routes import driver_bp
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(rank_dest_bp, url_prefix='/')
     app.register_blueprint(taxi_bp, url_prefix='/')
+    app.register_blueprint(driver_bp, url_prefix='/')
 
     @app.route('/')
     def index():
