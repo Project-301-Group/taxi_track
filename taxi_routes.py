@@ -35,13 +35,17 @@ def get_taxis_by_rank():
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
 
-    # Get the rank associated directly with this user_id
-    rank = Rank.query.filter_by(admin_id=user_id).first()
-    
-    if not rank:
-        return jsonify({"error": "Rank not found for this user"}), 404
+    # Step 1: Resolve user_id -> admin.id
+    admin = Admin.query.filter_by(user_id=user_id).first()
+    if not admin:
+        return jsonify({"error": "Admin not found for this user"}), 404
 
-    # Fetch all taxis under this rank
+    # Step 2: Use admin.id (not user_id) when finding rank
+    rank = Rank.query.filter_by(admin_id=admin.id).first()
+    if not rank:
+        return jsonify({"error": "Rank not found for this admin"}), 404
+
+    # Step 3: Fetch all taxis under this rank
     taxis = Taxi.query.filter_by(rank_id=rank.id).all()
 
     data = []
@@ -100,14 +104,19 @@ def create_taxi():
     if existing:
         return jsonify({"error": "Taxi with this registration number already exists"}), 409
 
-    # Get user_id and resolve to rank_id
+    # Get user_id and resolve admin first
     user_id = data.get("user_id")
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
 
-    rank = Rank.query.filter_by(admin_id=user_id).first()
+    admin = Admin.query.filter_by(user_id=user_id).first()
+    if not admin:
+        return jsonify({"error": "No admin found for this user"}), 404
+
+    # Use admin.id when resolving rank (NOT user_id)
+    rank = Rank.query.filter_by(admin_id=admin.id).first()
     if not rank:
-        return jsonify({"error": "No rank found for this user"}), 404
+        return jsonify({"error": "No rank found for this admin"}), 404
 
     # Validate driver_id if provided
     driver_id = data.get("driver_id")
@@ -147,7 +156,6 @@ def create_taxi():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Database error: {str(e)}"}), 500
-
 
 # ------------------------------------------------------------
 # 3️⃣ Show all drivers in the system with search by name

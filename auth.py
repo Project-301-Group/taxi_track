@@ -221,52 +221,65 @@ def get_profile():
     }), 200
 
 
-
 @auth_bp.route('/admin/details', methods=['GET'])
 def get_admin_details():
-    """Get admin details with rank information using correct user linkage.
-
+    """Get admin details with rank information.
+    
     Query params: user_id (required)
-    Returns: Admin name, phone, rank name, province, city
+    Returns: Admin name, phone, rank name, province, city, address
     """
     user_id = request.args.get('user_id', type=int)
-
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
 
-    # Corrected join chain:
-    # User → Admin (via Admin.user_id)
-    # User → Rank (via Rank.user_id)
+    # Step 1: Get admin ID linked to this user
+    admin = db.session.execute(text("""
+        SELECT id FROM admins WHERE user_id = :user_id
+    """), {'user_id': user_id}).fetchone()
+
+    if not admin:
+        return jsonify({'error': 'No admin found for this user_id'}), 404
+
+    admin_id = admin.id
+
+    # Step 2: Get admin + user + rank details using admin_id for rank
     sql = text("""
-        SELECT 
+        SELECT
+            u.id AS user_id,
             u.firstname,
             u.lastname,
             u.phone,
+            r.id AS rank_id,
             r.name AS rank_name,
-            r.province,
-            r.city
-        FROM users u
-        INNER JOIN admins a ON a.user_id = u.id
-        INNER JOIN ranks r ON r.admin_id = u.id
-        WHERE u.id = :user_id
+            r.address,
+            r.city,
+            r.province
+        FROM admins a
+        INNER JOIN users u ON a.user_id = u.id
+        LEFT JOIN ranks r ON r.admin_id = :admin_id
+        WHERE a.id = :admin_id
         LIMIT 1;
     """)
 
-    result = db.session.execute(sql, {'user_id': user_id}).fetchone()
+    result = db.session.execute(sql, {'admin_id': admin_id}).fetchone()
 
     if not result:
-        return jsonify({'error': 'Admin with rank not found for this user_id'}), 404
+        return jsonify({'error': 'Rank not found for this admin'}), 404
 
     return jsonify({
         'admin': {
             'firstname': result.firstname,
             'lastname': result.lastname,
             'phone': result.phone,
+            'rank_id': result.rank_id,
             'rank_name': result.rank_name,
+            'address': result.address,
             'province': result.province,
             'city': result.city
         }
     }), 200
+
+
 
 
 

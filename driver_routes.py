@@ -16,13 +16,16 @@ def get_driver_taxi_info():
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
 
+    # Get driver and associated user
     driver = Driver.query.filter_by(user_id=user_id).first()
     if not driver or not driver.taxi:
         return jsonify({"error": "Driver or taxi not found"}), 404
 
+    user = driver.user  # Access user profile directly from relationship
     taxi = driver.taxi
     rank = taxi.rank
 
+    # Build rank destinations
     rank_destinations = []
     for rd in rank.destinations:
         rank_destinations.append({
@@ -36,6 +39,12 @@ def get_driver_taxi_info():
         })
 
     return jsonify({
+        "driver": {
+            "id": driver.id,
+            "firstname": user.firstname,
+            "lastname": user.lastname,
+            "phone": user.phone
+        },
         "taxi": {
             "id": taxi.id,
             "registration_number": taxi.registration_number,
@@ -86,7 +95,15 @@ def create_trip():
     if not driver or not driver.taxi:
         return jsonify({"error": "Driver or taxi not found"}), 404
 
-    # Create trip
+    # 🚫 Check for existing active trip for this taxi
+    active_trip = Trip.query.filter_by(taxi_id=driver.taxi.id, status='active').first()
+    if active_trip:
+        return jsonify({
+            "error": "Cannot create a new trip while there is an active trip.",
+            "active_trip_id": active_trip.id
+        }), 400
+
+    # ✅ Create a new trip
     new_trip = Trip(
         taxi_id=driver.taxi.id,
         rank_destination_id=rank_destination_id,
