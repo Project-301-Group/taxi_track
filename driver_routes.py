@@ -230,3 +230,49 @@ def get_active_trip_qr():
         "taxi_id": driver.taxi.id,
         "qr_code": qr_base64
     }), 200
+
+
+# ------------------------------------------------------------
+# 7️⃣ Get all active trips (optionally filtered by driver user_id)
+# ------------------------------------------------------------
+@driver_bp.route('/driver/trips/active', methods=['GET'])
+def get_active_trips():
+    user_id = request.args.get('user_id', type=int)
+
+    # Optional: filter by a specific driver's active trip(s)
+    if user_id:
+        driver = Driver.query.filter_by(user_id=user_id).first()
+        if not driver or not driver.taxi:
+            return jsonify({"error": "Driver or taxi not found"}), 404
+
+        active_trips = Trip.query.filter_by(taxi_id=driver.taxi.id, status="active").all()
+    else:
+        # Otherwise return all active trips system-wide
+        active_trips = Trip.query.filter_by(status="active").all()
+
+    if not active_trips:
+        return jsonify({"message": "No active trips found"}), 404
+
+    trips_data = []
+    for trip in active_trips:
+        taxi = trip.taxi
+        rank_dest = trip.rank_destination
+        trips_data.append({
+            "trip_id": trip.id,
+            "status": trip.status,
+            "taxi": {
+                "id": taxi.id,
+                "registration_number": taxi.registration_number,
+                "capacity": taxi.capacity,
+                "status": taxi.status
+            } if taxi else None,
+            "rank_destination": {
+                "id": rank_dest.id,
+                "destination_name": rank_dest.destination_rank.name if rank_dest and rank_dest.destination_rank else None,
+                "fare": rank_dest.fare,
+                "distance_km": rank_dest.distance_km,
+                "estimated_duration": rank_dest.estimated_duration
+            } if rank_dest else None
+        })
+
+    return jsonify({"active_trips": trips_data}), 200
