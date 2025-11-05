@@ -88,27 +88,47 @@ def list_trips():
 
 
 # ------------------------------------------------------------
-# 3️⃣ List destinations for a specific rank (with fares)
+# 3️⃣ List all destinations (optionally searchable)
 # ------------------------------------------------------------
-@passenger_bp.route('/passenger/rank/destinations', methods=['GET'])
-def get_rank_destinations():
-    """Get destinations offered by a specific rank."""
+@passenger_bp.route('passenger/rank/destinations', methods=['GET'])
+def list_all_destinations():
+    """
+    List all rank destinations, optionally filtered by search or rank_id.
+    
+    Query params:
+        search (optional): search by destination name, distance, fare, etc.
+        rank_id (optional): filter destinations belonging to a specific rank.
+    """
+    search = request.args.get('search', type=str)
     rank_id = request.args.get('rank_id', type=int)
-    if not rank_id:
-        return jsonify({"error": "rank_id is required"}), 400
 
-    rank = Rank.query.get(rank_id)
-    if not rank:
-        return jsonify({"error": "Rank not found"}), 404
+    query = RankDestination.query
 
-    destinations = RankDestination.query.filter_by(rank_id=rank_id, active=True).all()
+    # Optional filter by rank
+    if rank_id:
+        query = query.filter_by(rank_id=rank_id)
+
+    # Optional text search across destination name, fare, and distance
+    if search:
+        search_term = f"%{search}%"
+        query = query.join(RankDestination.destination_rank).filter(
+            db.or_(
+                RankDestination.destination_rank.has(RankDestination.destination_rank.name.ilike(search_term)),
+                func.cast(RankDestination.distance_km, db.String).ilike(search_term),
+                func.cast(RankDestination.fare, db.String).ilike(search_term)
+            )
+        )
+
+    destinations = query.all()
     if not destinations:
-        return jsonify({"message": "No destinations found for this rank"}), 404
+        return jsonify({"message": "No destinations found"}), 404
 
     data = []
     for dest in destinations:
         data.append({
             "id": dest.id,
+            "origin_rank_id": dest.rank_id,
+            "origin_rank_name": dest.rank.name if dest.rank else None,
             "destination_rank_id": dest.destination_rank_id,
             "destination_name": dest.destination_rank.name if dest.destination_rank else None,
             "distance_km": dest.distance_km,
@@ -117,15 +137,7 @@ def get_rank_destinations():
             "active": dest.active
         })
 
-    return jsonify({
-        "rank": {
-            "id": rank.id,
-            "name": rank.name,
-            "city": rank.city,
-            "province": rank.province
-        },
-        "destinations": data
-    }), 200
+    return jsonify({"destinations": data}), 200
 
 
 # ------------------------------------------------------------
