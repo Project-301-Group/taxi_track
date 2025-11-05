@@ -194,3 +194,39 @@ def get_active_trip_passengers():
             })
 
     return jsonify({"trip_id": active_trip.id, "passengers": passengers_data}), 200
+
+
+# ------------------------------------------------------------
+# 6️⃣ Get QR code for driver's active trip
+# ------------------------------------------------------------
+@driver_bp.route('/driver/trip/qr', methods=['GET'])
+def get_active_trip_qr():
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    # Get driver and their taxi
+    driver = Driver.query.filter_by(user_id=user_id).first()
+    if not driver or not driver.taxi:
+        return jsonify({"error": "Driver or taxi not found"}), 404
+
+    # Find active trip
+    active_trip = Trip.query.filter_by(taxi_id=driver.taxi.id, status="active").first()
+    if not active_trip:
+        return jsonify({"error": "No active trip found for this taxi"}), 404
+
+    # Generate QR code for taxi registration number
+    qr = qrcode.QRCode(box_size=10, border=4)
+    qr.add_data(driver.taxi.registration_number)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    qr_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+
+    return jsonify({
+        "trip_id": active_trip.id,
+        "taxi_id": driver.taxi.id,
+        "qr_code": qr_base64
+    }), 200
