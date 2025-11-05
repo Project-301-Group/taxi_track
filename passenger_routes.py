@@ -90,32 +90,27 @@ def list_trips():
 # ------------------------------------------------------------
 # 3️⃣ List all destinations (optionally searchable)
 # ------------------------------------------------------------
-@passenger_bp.route('passenger/rank/destinations', methods=['GET'])
+@passenger_bp.route('/passenger/rank/destinations', methods=['GET'])
 def list_all_destinations():
     """
-    List all rank destinations, optionally filtered by search or rank_id.
+    List all rank destinations, optionally filtered by a search term.
     
     Query params:
-        search (optional): search by destination name, distance, fare, etc.
-        rank_id (optional): filter destinations belonging to a specific rank.
+        search (optional): search text for destination or origin rank names.
     """
     search = request.args.get('search', type=str)
-    rank_id = request.args.get('rank_id', type=int)
 
     query = RankDestination.query
 
-    # Optional filter by rank
-    if rank_id:
-        query = query.filter_by(rank_id=rank_id)
-
-    # Optional text search across destination name, fare, and distance
+    # Optional search by origin or destination name, fare, or distance
     if search:
         search_term = f"%{search}%"
-        query = query.join(RankDestination.destination_rank).filter(
+        query = query.join(RankDestination.destination_rank).join(RankDestination.origin_rank).filter(
             db.or_(
-                RankDestination.destination_rank.has(RankDestination.destination_rank.name.ilike(search_term)),
-                func.cast(RankDestination.distance_km, db.String).ilike(search_term),
-                func.cast(RankDestination.fare, db.String).ilike(search_term)
+                RankDestination.destination_rank.has(name=func.lower(search_term)),
+                RankDestination.origin_rank.has(name=func.lower(search_term)),
+                func.cast(RankDestination.fare, db.String).ilike(search_term),
+                func.cast(RankDestination.distance_km, db.String).ilike(search_term)
             )
         )
 
@@ -127,17 +122,27 @@ def list_all_destinations():
     for dest in destinations:
         data.append({
             "id": dest.id,
-            "origin_rank_id": dest.rank_id,
-            "origin_rank_name": dest.rank.name if dest.rank else None,
-            "destination_rank_id": dest.destination_rank_id,
-            "destination_name": dest.destination_rank.name if dest.destination_rank else None,
+            "origin_rank": {
+                "id": dest.origin_rank.id if dest.origin_rank else None,
+                "name": dest.origin_rank.name if dest.origin_rank else None,
+                "city": dest.origin_rank.city if hasattr(dest.origin_rank, 'city') else None,
+                "province": dest.origin_rank.province if hasattr(dest.origin_rank, 'province') else None
+            },
+            "destination_rank": {
+                "id": dest.destination_rank.id if dest.destination_rank else None,
+                "name": dest.destination_rank.name if dest.destination_rank else None,
+                "city": dest.destination_rank.city if hasattr(dest.destination_rank, 'city') else None,
+                "province": dest.destination_rank.province if hasattr(dest.destination_rank, 'province') else None
+            },
             "distance_km": dest.distance_km,
             "estimated_duration": dest.estimated_duration,
             "fare": dest.fare,
             "active": dest.active
         })
 
+
     return jsonify({"destinations": data}), 200
+
 
 
 # ------------------------------------------------------------
