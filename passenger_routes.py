@@ -358,8 +358,9 @@ def get_passenger_trips():
 
     return jsonify({"passenger_id": passenger.id, "trips": trips_data}), 200
 
+
 # ------------------------------------------------------------
-# 8 Get number of passengers for active trips
+# 8️⃣ Get number of passengers for active trips (with taxi + driver info)
 # ------------------------------------------------------------
 @passenger_bp.route('/active-trips/passenger-count', methods=['GET'])
 def get_active_trip_passenger_counts():
@@ -367,24 +368,35 @@ def get_active_trip_passenger_counts():
     Returns all active trips with:
         - trip_id
         - number of passengers currently in the trip
-        - taxi_id
-        - taxi capacity
-        - taxi registration number
+        - taxi details (id, registration_number, capacity)
+        - driver details (name, phone)
     """
 
-    # Query all active trips with passenger counts and taxi capacity
     results = (
         db.session.query(
             Trip.id.label('trip_id'),
             Taxi.id.label('taxi_id'),
             Taxi.registration_number.label('registration_number'),
             Taxi.capacity.label('capacity'),
-            func.count(trip_passengers.c.passenger_id).label('passenger_count')
+            func.count(trip_passengers.c.passenger_id).label('passenger_count'),
+            User.firstname.label('firstname'),
+            User.lastname.label('lastname'),
+            User.phone.label('phone')
         )
         .join(Taxi, Trip.taxi_id == Taxi.id)
+        .join(Driver, Taxi.driver_id == Driver.id)
+        .join(User, Driver.user_id == User.id)
         .outerjoin(trip_passengers, trip_passengers.c.trip_id == Trip.id)
         .filter(Trip.status == 'active')
-        .group_by(Trip.id, Taxi.id, Taxi.registration_number, Taxi.capacity)
+        .group_by(
+            Trip.id,
+            Taxi.id,
+            Taxi.registration_number,
+            Taxi.capacity,
+            User.firstname,
+            User.lastname,
+            User.phone
+        )
         .all()
     )
 
@@ -395,14 +407,19 @@ def get_active_trip_passenger_counts():
     for row in results:
         trips_data.append({
             "trip_id": row.trip_id,
-            "taxi_id": row.taxi_id,
-            "registration_number": row.registration_number,
-            "capacity": row.capacity,
-            "passenger_count": row.passenger_count
+            "passenger_count": row.passenger_count,
+            "taxi": {
+                "id": row.taxi_id,
+                "registration_number": row.registration_number,
+                "capacity": row.capacity
+            },
+            "driver": {
+                "name": f"{row.firstname} {row.lastname}",
+                "phone": row.phone
+            }
         })
 
     return jsonify({
         "active_trips": len(trips_data),
         "trips": trips_data
     }), 200
-
