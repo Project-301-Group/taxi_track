@@ -230,3 +230,94 @@ def join_trip():
         "trip_id": active_trip.id,
         "taxi_id": taxi.id
     }), 201
+
+# ------------------------------------------------------------
+# 6 Get passenger info with trip count
+# ------------------------------------------------------------
+@passenger_bp.route('/passenger/info', methods=['GET'])
+def get_passenger_info():
+    """
+    Get passenger profile info and total number of trips taken.
+
+    Query params:
+        user_id (required): ID of the passenger user
+    """
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    passenger = Passenger.query.filter_by(user_id=user_id).first()
+    if not passenger or not passenger.user:
+        return jsonify({"error": "Passenger not found"}), 404
+
+    # Count trips associated with this passenger
+    trip_count = (
+        db.session.query(func.count(Trip.id))
+        .join(Trip.passengers)
+        .filter(Passenger.user_id == user_id)
+        .scalar()
+    )
+
+    return jsonify({
+        "passenger": {
+            "id": passenger.id,
+            "firstname": passenger.user.firstname,
+            "lastname": passenger.user.lastname,
+            "phone": passenger.user.phone,
+            "address": passenger.address
+        },
+        "trip_count": trip_count
+    }), 200
+
+
+# ------------------------------------------------------------
+# 7 Get passenger's trip list
+# ------------------------------------------------------------
+@passenger_bp.route('/passenger/trips', methods=['GET'])
+def get_passenger_trips():
+    """
+    Get all trips associated with a given passenger.
+
+    Query params:
+        user_id (required): ID of the passenger user
+    """
+    user_id = request.args.get('user_id', type=int)
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+
+    passenger = Passenger.query.filter_by(user_id=user_id).first()
+    if not passenger:
+        return jsonify({"error": "Passenger not found"}), 404
+
+    trips = (
+        Trip.query
+        .join(Trip.passengers)
+        .filter(Passenger.user_id == user_id)
+        .all()
+    )
+
+    if not trips:
+        return jsonify({"message": "No trips found for this passenger"}), 404
+
+    trips_data = []
+    for trip in trips:
+        rank_dest = trip.rank_destination
+        taxi = trip.taxi
+
+        trips_data.append({
+            "trip_id": trip.id,
+            "status": trip.status,
+            "rank_destination": {
+                "id": rank_dest.id if rank_dest else None,
+                "destination_name": rank_dest.destination_rank.name if rank_dest and rank_dest.destination_rank else None,
+                "fare": rank_dest.fare if rank_dest else None,
+                "distance_km": rank_dest.distance_km if rank_dest else None,
+                "estimated_duration": rank_dest.estimated_duration if rank_dest else None
+            } if rank_dest else None,
+            "taxi": {
+                "id": taxi.id if taxi else None,
+                "registration_number": taxi.registration_number if taxi else None
+            } if taxi else None
+        })
+
+    return jsonify({"passenger_id": passenger.id, "trips": trips_data}), 200
