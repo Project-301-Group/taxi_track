@@ -360,19 +360,19 @@ def get_passenger_trips():
 
 
 # ------------------------------------------------------------
-# 8️⃣ Get number of passengers for active trips (with taxi + driver info)
+# 8️⃣ Get passenger count for a specific active trip (with taxi + driver info)
 # ------------------------------------------------------------
-@passenger_bp.route('/active-trips/passenger-count', methods=['GET'])
-def get_active_trip_passenger_counts():
+@passenger_bp.route('/active-trips/<int:trip_id>/passenger-count', methods=['GET'])
+def get_specific_trip_passenger_count(trip_id):
     """
-    Returns all active trips with:
+    Returns passenger info for a specific active trip including:
         - trip_id
         - number of passengers currently in the trip
         - taxi details (id, registration_number, capacity)
         - driver details (name, phone)
     """
 
-    results = (
+    result = (
         db.session.query(
             Trip.id.label('trip_id'),
             Taxi.id.label('taxi_id'),
@@ -387,7 +387,7 @@ def get_active_trip_passenger_counts():
         .join(Driver, Taxi.driver_id == Driver.id)
         .join(User, Driver.user_id == User.id)
         .outerjoin(trip_passengers, trip_passengers.c.trip_id == Trip.id)
-        .filter(Trip.status == 'active')
+        .filter(Trip.id == trip_id, Trip.status == 'active')
         .group_by(
             Trip.id,
             Taxi.id,
@@ -397,29 +397,24 @@ def get_active_trip_passenger_counts():
             User.lastname,
             User.phone
         )
-        .all()
+        .first()
     )
 
-    if not results:
-        return jsonify({"message": "No active trips found"}), 404
+    if not result:
+        return jsonify({"message": f"No active trip found with id {trip_id}"}), 404
 
-    trips_data = []
-    for row in results:
-        trips_data.append({
-            "trip_id": row.trip_id,
-            "passenger_count": row.passenger_count,
-            "taxi": {
-                "id": row.taxi_id,
-                "registration_number": row.registration_number,
-                "capacity": row.capacity
-            },
-            "driver": {
-                "name": f"{row.firstname} {row.lastname}",
-                "phone": row.phone
-            }
-        })
+    trip_data = {
+        "trip_id": result.trip_id,
+        "passenger_count": result.passenger_count,
+        "taxi": {
+            "id": result.taxi_id,
+            "registration_number": result.registration_number,
+            "capacity": result.capacity
+        },
+        "driver": {
+            "name": f"{result.firstname} {result.lastname}",
+            "phone": result.phone
+        }
+    }
 
-    return jsonify({
-        "active_trips": len(trips_data),
-        "trips": trips_data
-    }), 200
+    return jsonify(trip_data), 200
