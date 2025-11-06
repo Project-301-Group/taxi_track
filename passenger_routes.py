@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from models import db, User, Taxi, Trip, Passenger, Rank, RankDestination, trip_passengers
 from sqlalchemy import or_
+from sqlalchemy import func
 
 passenger_bp = Blueprint('passenger_bp', __name__)
 
@@ -221,14 +222,33 @@ def join_trip():
     if existing:
         return jsonify({"message": "Passenger already part of this trip"}), 200
 
-    # Add to trip
+    # Add passenger to trip
     active_trip.passengers.append(passenger)
+    db.session.flush()  # Ensure relationship updates before count
+
+    # Check current passenger count
+    passenger_count = db.session.query(trip_passengers).filter_by(trip_id=active_trip.id).count()
+
+    # If capacity reached, complete the trip
+    if passenger_count >= taxi.capacity:
+        active_trip.status = "completed"
+        db.session.commit()
+        return jsonify({
+            "message": "Passenger joined. Trip is now completed (capacity reached).",
+            "trip_id": active_trip.id,
+            "taxi_id": taxi.id,
+            "status": active_trip.status
+        }), 201
+
     db.session.commit()
 
     return jsonify({
         "message": "Passenger successfully joined the active trip",
         "trip_id": active_trip.id,
-        "taxi_id": taxi.id
+        "taxi_id": taxi.id,
+        "current_passengers": passenger_count,
+        "capacity": taxi.capacity,
+        "status": active_trip.status
     }), 201
 
 # ------------------------------------------------------------
@@ -273,7 +293,7 @@ def get_passenger_info():
 # ------------------------------------------------------------
 # 7 Get passenger's trip list
 # ------------------------------------------------------------
-@passenger_bp.route('/passenger/trips', methods=['GET'])
+@passenger_bp.route('/passenger/trips/target', methods=['GET'])
 def get_passenger_trips():
     """
     Get all trips associated with a given passenger.
@@ -282,6 +302,7 @@ def get_passenger_trips():
         user_id (required): ID of the passenger user
     """
     user_id = request.args.get('user_id', type=int)
+    print("userid", user_id)
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
 
@@ -292,7 +313,7 @@ def get_passenger_trips():
     trips = (
         Trip.query
         .join(Trip.passengers)
-        .filter(Passenger.user_id == user_id)
+        .filter(Passenger.id == passenger.id)
         .all()
     )
 
@@ -303,6 +324,16 @@ def get_passenger_trips():
     for trip in trips:
         rank_dest = trip.rank_destination
         taxi = trip.taxi
+
+        # Get driver user info (linked through Driver -> User)
+        driver_user = None
+        if getattr(trip, "driver_id", None):
+            driver_user = (
+                db.session.query(User)
+                .join(Driver, Driver.user_id == User.id)
+                .filter(Driver.id == trip.driver_id)
+                .first()
+            )
 
         trips_data.append({
             "trip_id": trip.id,
@@ -317,7 +348,61 @@ def get_passenger_trips():
             "taxi": {
                 "id": taxi.id if taxi else None,
                 "registration_number": taxi.registration_number if taxi else None
-            } if taxi else None
+            } if taxi else None,
+            "driver": {
+                "id": trip.driver_id if getattr(trip, "driver_id", None) else None,
+                "name": driver_user.name if driver_user else None,
+                "phone_number": driver_user.phone_number if driver_user else None
+            } if driver_user else None
         })
 
     return jsonify({"passenger_id": passenger.id, "trips": trips_data}), 200
+
+# ------------------------------------------------------------
+# 8 Get number of passengers for active trips
+# ------------------------------------------------------------
+@passenger_bp.route('/active-trips/passenger-count', methods=['GET'])
+def get_active_trip_passenger_counts():
+    """
+    Returns all active trips with:
+        - trip_id
+        - number of passengers currently in the trip
+        - taxi_id
+        - taxi capacity
+        - taxi registration number
+    """
+
+    # Query all active trips with passenger counts and taxi capacity
+    results = (
+        db.session.query(
+            Trip.id.label('trip_id'),
+            Taxi.id.label('taxi_id'),
+            Taxi.registration_number.label('registration_number'),
+            Taxi.capacity.label('capacity'),
+            func.count(trip_passengers.c.passenger_id).label('passenger_count')
+        )
+        .join(Taxi, Trip.taxi_id == Taxi.id)
+        .outerjoin(trip_passengers, trip_passengers.c.trip_id == Trip.id)
+        .filter(Trip.status == 'active')
+        .group_by(Trip.id, Taxi.id, Taxi.registration_number, Taxi.capacity)
+        .all()
+    )
+
+    if not results:
+        return jsonify({"message": "No active trips found"}), 404
+
+    trips_data = []
+    for row in results:
+        trips_data.append({
+            "trip_id": row.trip_id,
+            "taxi_id": row.taxi_id,
+            "registration_number": row.registration_number,
+            "capacity": row.capacity,
+            "passenger_count": row.passenger_count
+        })
+
+    return jsonify({
+        "active_trips": len(trips_data),
+        "trips": trips_data
+    }), 200
+
