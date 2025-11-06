@@ -50,6 +50,7 @@ def list_trips():
     """List all trips; optionally filter by destination location."""
     destination = request.args.get('destination', type=str)
 
+    
     query = Trip.query.join(RankDestination)
     if destination:
         like_term = f"%{destination}%"
@@ -59,7 +60,7 @@ def list_trips():
                 Rank.name.ilike(like_term),
                 Rank.city.ilike(like_term),
                 Rank.province.ilike(like_term)
-            )
+            ) 
         )
 
     trips = query.all()
@@ -147,43 +148,77 @@ def list_all_destinations():
 
 
 # ------------------------------------------------------------
-# 4️⃣ List trips either by taxi_id or by rank_destination_id
+# 4️⃣ List trips either by rank_destination_id or by rank_id (taxi's rank)
 # ------------------------------------------------------------
 @passenger_bp.route('/passenger/trips/filter', methods=['GET'])
 def list_filtered_trips():
-    """List trips filtered either by taxi_id or rank_destination_id."""
-    taxi_id = request.args.get('taxi_id', type=int)
+    """
+    List trips filtered either by rank_destination_id (direct) or by rank_id (via taxi.rank_id).
+    Response shape matches PassengerTripsResponse expected by Android.
+    Query params:
+        rank_destination_id (optional)
+        rank_id (optional)
+    """
     rank_destination_id = request.args.get('rank_destination_id', type=int)
+    rank_id = request.args.get('rank_id', type=int)
 
-    if not taxi_id and not rank_destination_id:
-        return jsonify({"error": "Provide either taxi_id or rank_destination_id"}), 400
+    # Require at least one filter
+    if not rank_destination_id and not rank_id:
+        return jsonify({"error": "Provide either rank_destination_id or rank_id"}), 400
 
-    query = Trip.query
-    if taxi_id:
-        query = query.filter_by(taxi_id=taxi_id)
+    # Build query based on provided filter
     if rank_destination_id:
-        query = query.filter_by(rank_destination_id=rank_destination_id)
+        trips = Trip.query.filter_by(rank_destination_id=rank_destination_id).all()
+    else:
+        # rank_id supplied -> find taxis that belong to that rank then trips for those taxis
+        taxi_ids = [t.id for t in Taxi.query.filter_by(rank_id=rank_id).all()]
+        if not taxi_ids:
+            # return empty list so client handles gracefully
+            return jsonify({"trips": []}), 200
+        trips = Trip.query.filter(Trip.taxi_id.in_(taxi_ids)).all()
 
-    trips = query.all()
-    if not trips:
-        return jsonify({"message": "No trips found for the given filter"}), 404
-
+    # Build response list (match Android model)
     data = []
     for trip in trips:
+        # rank_destination info
+        rd = trip.rank_destination
+        rd_obj = None
+        if rd:
+            rd_obj = {
+                "id": rd.id,
+                "destination_name": rd.destination_rank.name if rd.destination_rank else None,
+                "distance_km": rd.distance_km if rd.distance_km is not None else None,
+                "estimated_duration": rd.estimated_duration if rd.estimated_duration is not None else None,
+                "fare": rd.fare if rd.fare is not None else None
+            }
+
+        # taxi info
+        taxi = trip.taxi
+        taxi_obj = {
+            "id": taxi.id if taxi else None,
+            "registration_number": taxi.registration_number if taxi else None
+        } if taxi else None
+
+        # driver info via taxi -> driver -> user
+        driver_obj = None
+        if taxi and taxi.driver and taxi.driver.user:
+            driver_user = taxi.driver.user
+            driver_obj = {
+                "id": taxi.driver.id,
+                "name": f"{driver_user.firstname} {driver_user.lastname}",
+                "phone_number": driver_user.phone
+            }
+
         data.append({
             "trip_id": trip.id,
             "status": trip.status,
-            "taxi": {
-                "id": trip.taxi.id if trip.taxi else None,
-                "registration_number": trip.taxi.registration_number if trip.taxi else None
-            },
-            "rank_destination": {
-                "id": trip.rank_destination.id if trip.rank_destination else None,
-                "destination_name": trip.rank_destination.destination_rank.name if trip.rank_destination and trip.rank_destination.destination_rank else None
-            }
+            "rank_destination": rd_obj,
+            "taxi": taxi_obj,
+            "driver": driver_obj
         })
 
     return jsonify({"trips": data}), 200
+
 
 
 # ------------------------------------------------------------
@@ -291,7 +326,7 @@ def get_passenger_info():
 
 
 # ------------------------------------------------------------
-# 7 Get passenger's trip list
+# 7️⃣ Get passenger's trip list (with driver info)
 # ------------------------------------------------------------
 @passenger_bp.route('/passenger/trips/target', methods=['GET'])
 def get_passenger_trips():
@@ -302,14 +337,15 @@ def get_passenger_trips():
         user_id (required): ID of the passenger user
     """
     user_id = request.args.get('user_id', type=int)
-    print("userid", user_id)
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
 
+    # Get the passenger profile
     passenger = Passenger.query.filter_by(user_id=user_id).first()
     if not passenger:
         return jsonify({"error": "Passenger not found"}), 404
 
+    # Get all trips for this passenger
     trips = (
         Trip.query
         .join(Trip.passengers)
@@ -324,23 +360,21 @@ def get_passenger_trips():
     for trip in trips:
         rank_dest = trip.rank_destination
         taxi = trip.taxi
-
-        # Get driver user info (linked through Driver -> User)
         driver_user = None
-        if getattr(trip, "driver_id", None):
-            driver_user = (
-                db.session.query(User)
-                .join(Driver, Driver.user_id == User.id)
-                .filter(Driver.id == trip.driver_id)
-                .first()
-            )
+
+        # ✅ Correct way to get driver and user info
+        if taxi and taxi.driver and taxi.driver.user:
+            driver_user = taxi.driver.user
 
         trips_data.append({
             "trip_id": trip.id,
             "status": trip.status,
             "rank_destination": {
                 "id": rank_dest.id if rank_dest else None,
-                "destination_name": rank_dest.destination_rank.name if rank_dest and rank_dest.destination_rank else None,
+                "destination_name": (
+                    rank_dest.destination_rank.name
+                    if rank_dest and rank_dest.destination_rank else None
+                ),
                 "fare": rank_dest.fare if rank_dest else None,
                 "distance_km": rank_dest.distance_km if rank_dest else None,
                 "estimated_duration": rank_dest.estimated_duration if rank_dest else None
@@ -350,19 +384,25 @@ def get_passenger_trips():
                 "registration_number": taxi.registration_number if taxi else None
             } if taxi else None,
             "driver": {
-                "id": trip.driver_id if getattr(trip, "driver_id", None) else None,
-                "name": driver_user.name if driver_user else None,
-                "phone_number": driver_user.phone_number if driver_user else None
+                "id": taxi.driver.id if taxi and taxi.driver else None,
+                "name": f"{driver_user.firstname} {driver_user.lastname}" if driver_user else None,
+                "phone_number": driver_user.phone if driver_user else None
             } if driver_user else None
         })
 
-    return jsonify({"passenger_id": passenger.id, "trips": trips_data}), 200
+        print(trips_data)
+
+    return jsonify({
+        "passenger_id": passenger.id,
+        "trips": trips_data
+    }), 200
+
 
 
 # ------------------------------------------------------------
 # 8️⃣ Get passenger count for a specific active trip (with taxi + driver info)
 # ------------------------------------------------------------
-@passenger_bp.route('/active-trips/<int:trip_id>/passenger-count', methods=['GET'])
+@passenger_bp.route('passenger/active-trips/<int:trip_id>/passenger-count', methods=['GET'])
 def get_specific_trip_passenger_count(trip_id):
     """
     Returns passenger info for a specific active trip including:
@@ -371,49 +411,32 @@ def get_specific_trip_passenger_count(trip_id):
         - taxi details (id, registration_number, capacity)
         - driver details (name, phone)
     """
-
-    result = (
-        db.session.query(
-            Trip.id.label('trip_id'),
-            Taxi.id.label('taxi_id'),
-            Taxi.registration_number.label('registration_number'),
-            Taxi.capacity.label('capacity'),
-            func.count(trip_passengers.c.passenger_id).label('passenger_count'),
-            User.firstname.label('firstname'),
-            User.lastname.label('lastname'),
-            User.phone.label('phone')
-        )
-        .join(Taxi, Trip.taxi_id == Taxi.id)
-        .join(Driver, Taxi.driver_id == Driver.id)
-        .join(User, Driver.user_id == User.id)
-        .outerjoin(trip_passengers, trip_passengers.c.trip_id == Trip.id)
-        .filter(Trip.id == trip_id, Trip.status == 'active')
-        .group_by(
-            Trip.id,
-            Taxi.id,
-            Taxi.registration_number,
-            Taxi.capacity,
-            User.firstname,
-            User.lastname,
-            User.phone
-        )
-        .first()
-    )
-
-    if not result:
+    # Get the trip by ID
+    trip = Trip.query.filter_by(id=trip_id, status='active').first()
+    
+    if not trip:
         return jsonify({"message": f"No active trip found with id {trip_id}"}), 404
 
+    # Taxi and driver info through relationships
+    taxi = trip.taxi
+    driver = taxi.driver if taxi else None
+    driver_user = driver.user if driver else None
+
+    # Count passengers using the relationship
+    passenger_count = len(trip.passengers)
+
+    # Build response
     trip_data = {
-        "trip_id": result.trip_id,
-        "passenger_count": result.passenger_count,
+        "trip_id": trip.id,
+        "passenger_count": passenger_count,
         "taxi": {
-            "id": result.taxi_id,
-            "registration_number": result.registration_number,
-            "capacity": result.capacity
+            "id": taxi.id if taxi else None,
+            "registration_number": taxi.registration_number if taxi else None,
+            "capacity": taxi.capacity if taxi else None
         },
         "driver": {
-            "name": f"{result.firstname} {result.lastname}",
-            "phone": result.phone
+            "name": f"{driver_user.firstname} {driver_user.lastname}" if driver_user else None,
+            "phone": driver_user.phone if driver_user else None
         }
     }
 
